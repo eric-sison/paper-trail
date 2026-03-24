@@ -1,4 +1,5 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
+import { TooltipProvider } from "@workspace/ui/components/tooltip"
 
 import appCss from "@workspace/ui/globals.css?url"
 
@@ -33,7 +34,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        {children}
+        <TooltipProvider>{children}</TooltipProvider>
         <Scripts />
       </body>
     </html>
