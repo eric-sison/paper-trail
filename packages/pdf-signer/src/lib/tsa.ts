@@ -1,55 +1,29 @@
 /**
  * @file tsa.ts
  *
- * Handles RFC 3161 timestamping for PDF digital signatures.
+ * RFC 3161 timestamp authority support.
  *
- * The TSA (Timestamp Authority) proves when the document was signed.
- * Without it, someone could theoretically backdate a signature.
+ * Pure functions (testable without network):
+ *   buildTSRequest()         — DER-encoded TimeStampReq
+ *   extractTSToken()         — parses TimeStampResp → token Buffer
+ *   injectTimestampIntoCMS() — patches token into CMS unsignedAttrs
  *
- *      Us                                 PNPKI TSA Server
- *      |                                        |
- *      |-- POST TimeStampReq -----------------> |
- *      |   (hash of our signature value)        |
- *      |                                        |
- *      |<-- TimeStampResp ----------------------|
- *      |   (signed token with time embedded)    |
- *
- * Why hash the signature value rather than the document?
- *   - The document's integrity is already proven by the signature itself
- *   - Sending the full PDF would be slow and a privacy concern
- *   - The TSA only needs to answer: "did this signature exist before time T?"
- *
- * This file is split into three layers:
- *
- *   Pure (no side effects, fully testable):
- *     - buildTSRequest()          — builds the DER-encoded TimeStampReq
- *     - extractTSToken()          — parses the DER-encoded TimeStampResp
- *     - injectTimestampIntoCMS()  — patches the token into CMS unsigned attrs
- *
- *   Side effects (HTTP, testable via injection):
- *     - requestTimestamp()        — sends the request and returns the token
+ * Side effects (network):
+ *   requestTimestamp()       — sends request, returns token with retry
  */
 
 import forge from "node-forge";
 import crypto from "crypto";
+import type { RetryOptions } from "../types.js";
 import { TSAError } from "../types.js";
+import { withRetry, DEFAULT_TSA_RETRY } from "./retry.js";
 
 // ─── Pure: Request Builder ────────────────────────────────────────────────────
 
 /**
  * Builds a DER-encoded RFC 3161 TimeStampReq.
- *
- * Structure:
- *   TimeStampReq
- *     ├── version        INTEGER (always 1)
- *     ├── messageImprint
- *     │     ├── hashAlgorithm  SHA-256
- *     │     └── hashedMessage  the hash bytes
- *     ├── nonce          random 8 bytes (prevents replay attacks)
- *     └── certReq        TRUE — ask TSA to include its certificate
- *
- * @param hashBuffer - SHA-256 hash of the signature value bytes
- * @returns DER-encoded TimeStampReq as a Buffer
+ * Uses SHA-256 for the message imprint hash.
+ * Includes a random nonce to prevent replay attacks.
  */
 export function buildTSRequest(hashBuffer: Buffer): Buffer {
   const sha256AlgId = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
@@ -57,7 +31,7 @@ export function buildTSRequest(hashBuffer: Buffer): Buffer {
       forge.asn1.Class.UNIVERSAL,
       forge.asn1.Type.OID,
       false,
-      forge.asn1.oidToDer("2.16.840.1.101.3.4.2.1").getBytes() // SHA-256
+      forge.asn1.oidToDer("2.16.840.1.101.3.4.2.1").getBytes()
     ),
     forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.NULL, false, ""),
   ]);
@@ -82,23 +56,9 @@ export function buildTSRequest(hashBuffer: Buffer): Buffer {
 // ─── Pure: Response Parser ────────────────────────────────────────────────────
 
 /**
- * Parses a DER-encoded TimeStampResp and extracts the TimeStampToken.
+ * Parses a DER-encoded TimeStampResp and returns the TimeStampToken.
  *
- * Structure:
- *   TimeStampResp
- *     ├── status PKIStatusInfo
- *     │     └── status INTEGER
- *     │           0 = granted
- *     │           1 = grantedWithMods
- *     │           2 = rejection
- *     │           3 = waiting
- *     │           4 = revocationWarning
- *     │           5 = revocationNotification
- *     └── timeStampToken ContentInfo ← returned as-is
- *
- * @param responseBuffer - Raw bytes from the TSA HTTP response
- * @returns DER-encoded TimeStampToken as a Buffer
- * @throws {TSAError} If the TSA rejected the request or token is missing
+ * @throws {TSAError} If the TSA rejected the request or token is absent
  */
 export function extractTSToken(responseBuffer: Buffer): Buffer {
   const asn1 = forge.asn1.fromDer(responseBuffer.toString("binary"));
@@ -114,10 +74,10 @@ export function extractTSToken(responseBuffer: Buffer): Buffer {
       4: "revocationWarning",
       5: "revocationNotification",
     };
-    throw new TSAError(`TSA rejected the request: ${reasons[statusCode] ?? `status ${statusCode}`}`);
+    throw new TSAError(reasons[statusCode] ?? `status code ${statusCode}`);
   }
 
-  if (!seq[1]) throw new TSAError("TSA response did not include a TimeStampToken.");
+  if (!seq[1]) throw new TSAError("Response did not include a TimeStampToken.");
 
   return Buffer.from(forge.asn1.toDer(seq[1]).getBytes(), "binary");
 }
@@ -125,22 +85,11 @@ export function extractTSToken(responseBuffer: Buffer): Buffer {
 // ─── Pure: CMS Injection ──────────────────────────────────────────────────────
 
 /**
- * Injects a TSA TimeStampToken into an existing CMS SignedData structure.
+ * Injects a TSA TimeStampToken into an existing CMS SignedData structure
+ * as an unsigned attribute (id-aa-signatureTimeStampToken).
  *
- * The token is added as an unsigned attribute on the first SignerInfo:
- *   id-aa-signatureTimeStampToken (OID 1.2.840.113549.1.9.16.2.14)
- *
- * Why unsigned (not signed) attributes?
- *   Signed attributes are included in the hash — adding them after signing
- *   would invalidate the signature. Unsigned attributes are appended after
- *   signing and are not part of the hash — perfect for the timestamp token.
- *
- * CMS structure navigated:
- *   ContentInfo → SignedData → signerInfos → SignerInfo → unsignedAttrs
- *
- * @param cmsDer     - DER-encoded CMS SignedData
- * @param tsTokenDer - DER-encoded TimeStampToken from the TSA
- * @returns Modified CMS DER buffer with the timestamp token embedded
+ * Unsigned attributes are not covered by the signature hash, making them
+ * safe to add after signing.
  */
 export function injectTimestampIntoCMS(cmsDer: Buffer, tsTokenDer: Buffer): Buffer {
   const asn1 = forge.asn1.fromDer(cmsDer.toString("binary"));
@@ -152,8 +101,6 @@ export function injectTimestampIntoCMS(cmsDer: Buffer, tsTokenDer: Buffer): Buff
   const signerInfo = (signerInfosSet.value as forge.asn1.Asn1[])[0];
   const signerInfoSeq = signerInfo.value as forge.asn1.Asn1[];
 
-  // Build timestamp unsigned attribute
-  // OID: id-aa-signatureTimeStampToken (1.2.840.113549.1.9.16.2.14)
   const tsAttr = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
     forge.asn1.create(
       forge.asn1.Class.UNIVERSAL,
@@ -166,7 +113,6 @@ export function injectTimestampIntoCMS(cmsDer: Buffer, tsTokenDer: Buffer): Buff
     ]),
   ]);
 
-  // Find existing unsignedAttrs [1] IMPLICIT SET or create new ones
   let unsignedAttrsIdx = -1;
   for (let i = 0; i < signerInfoSeq.length; i++) {
     if (signerInfoSeq[i].tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && signerInfoSeq[i].type === 1) {
@@ -184,31 +130,30 @@ export function injectTimestampIntoCMS(cmsDer: Buffer, tsTokenDer: Buffer): Buff
   return Buffer.from(forge.asn1.toDer(asn1).getBytes(), "binary");
 }
 
-// ─── Side Effect: HTTP ────────────────────────────────────────────────────────
+// ─── Side Effect: HTTP + retry ────────────────────────────────────────────────
 
 /**
- * Requests an RFC 3161 timestamp from the TSA and returns the TimeStampToken.
+ * Requests an RFC 3161 timestamp token from the TSA with retry.
  *
- * Steps:
- *   1. Hash the signature value bytes with SHA-256
- *   2. Build a TimeStampReq containing that hash
- *   3. POST it to the TSA URL
- *   4. Extract and return the TimeStampToken
- *
- * @param signatureValueBytes - Raw bytes of the CMS signature value
- * @param tsaUrl              - Timestamp Authority URL
- * @param timeoutMs           - Timeout in milliseconds (default 10 seconds)
- * @returns DER-encoded TimeStampToken as a Buffer
- * @throws {TSAError} If the request fails or times out
+ * @param signatureValueBytes - Raw CMS signature value (not the full PDF)
+ * @param tsaUrl              - TSA endpoint
+ * @param timeoutMs           - Per-attempt timeout in ms
+ * @param retryOptions        - Retry configuration
+ * @throws {TSAError} If all attempts fail
  */
 export async function requestTimestamp(
   signatureValueBytes: Buffer,
   tsaUrl: string,
-  timeoutMs = 10000
+  timeoutMs = 10000,
+  retryOptions: RetryOptions = DEFAULT_TSA_RETRY
 ): Promise<Buffer> {
   const hash = crypto.createHash("sha256").update(signatureValueBytes).digest();
   const tsRequest = buildTSRequest(hash);
 
+  return withRetry(() => sendTSARequest(tsRequest, tsaUrl, timeoutMs), retryOptions);
+}
+
+async function sendTSARequest(tsRequest: Buffer, tsaUrl: string, timeoutMs: number): Promise<Buffer> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
