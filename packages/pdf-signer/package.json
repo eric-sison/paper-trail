@@ -1,0 +1,34 @@
+{
+  "name": "@workspace/pdf-signer",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@signpdf/placeholder-pdf-lib": "^3.2.1",
+    "@signpdf/signer-p12": "^3.2.1",
+    "@signpdf/signpdf": "^3.2.1",
+    "@signpdf/utils": "^3.2.1",
+    "node-forge": "^1.3.1",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/node-forge": "^1.3.10",
+    "typescript": "^5",
+    "vitest": "^4.1.1"
+  }
+}
