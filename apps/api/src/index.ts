@@ -1,11 +1,15 @@
-import { serve } from "@hono/node-server"
-import { Hono } from "hono"
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { signHandler } from "./routes/sign.js";
+import { cors } from "hono/cors";
 
-const app = new Hono()
+const app = new Hono().basePath("/api");
 
-app.get("/", (c) => {
-  return c.text("Hello Hono!")
-})
+app.use(cors({ origin: ["http://localhost:3000"] }));
+
+const routes = [signHandler] as const;
+
+routes.forEach((route) => app.route("/", route));
 
 serve(
   {
@@ -13,6 +17,6 @@ serve(
     port: 3852,
   },
   (info) => {
-    console.log(`Server is running on http://localhost:${info.port}`)
+    console.log(`Server is running on http://localhost:${info.port}`);
   }
-)
+);
