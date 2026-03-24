@@ -63,6 +63,7 @@ export const signHandler = new Hono().post("/sign", zValidator("form", SignSchem
         "X-Cert-Organization": encodeURIComponent(result.certInfo.organization),
         "X-OCSP-Status": result.ocspResult.status,
         "X-Timestamped": String(result.timestamped),
+        "X-DSS-Added": String(result.dssAdded), // ← add this
         "X-Warnings": encodeURIComponent(JSON.stringify(result.warnings)),
       },
     });

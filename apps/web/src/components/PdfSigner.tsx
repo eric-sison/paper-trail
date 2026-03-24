@@ -27,6 +27,7 @@ export function PdfSigner() {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [p12File, setP12File] = useState<File | null>(null);
   const [signatureImageFile, setSignatureImageFile] = useState<File | null>(null);
+  const [dssAdded, setDssAdded] = useState(false);
 
   // Credentials
   const [password, setPassword] = useState("");
@@ -83,7 +84,8 @@ export function PdfSigner() {
 
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
-      const filename = response.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "signed.pdf";
+      const filename =
+        response.headers.get("Content-Disposition")?.match(/filename="(.+)"/)?.[1] ?? "signed.pdf";
 
       const warningsHeader = response.headers.get("X-Warnings");
       if (warningsHeader) {
@@ -92,6 +94,7 @@ export function PdfSigner() {
 
       setOcspStatus(response.headers.get("X-OCSP-Status") ?? "unknown");
       setTimestamped(response.headers.get("X-Timestamped") === "true");
+      setDssAdded(response.headers.get("X-DSS-Added") === "true");
       setSignedPdfUrl(blobUrl);
       setSignedPdfFilename(filename);
       setStage("done");
@@ -117,6 +120,7 @@ export function PdfSigner() {
     setSignedPdfFilename(null);
     setOcspStatus("unknown");
     setTimestamped(false);
+    setDssAdded(false);
   };
 
   return (
@@ -469,8 +473,14 @@ export function PdfSigner() {
             {warnings.length > 0 && (
               <div className="flex flex-col gap-2">
                 {warnings.map((w, i) => (
-                  <Alert key={i} variant="default" className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20">
-                    <AlertDescription className="text-xs text-yellow-700 dark:text-yellow-400">⚠ {w}</AlertDescription>
+                  <Alert
+                    key={i}
+                    variant="default"
+                    className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20"
+                  >
+                    <AlertDescription className="text-xs text-yellow-700 dark:text-yellow-400">
+                      ⚠ {w}
+                    </AlertDescription>
                   </Alert>
                 ))}
               </div>
@@ -494,14 +504,28 @@ export function PdfSigner() {
                 {stage === "signing" ? (
                   <span className="flex items-center gap-2">
                     <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                     </svg>
                     Signing document…
                   </span>
                 ) : (
                   <span className="flex items-center gap-2">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                     </svg>
                     Sign Document with PNPKI
@@ -522,7 +546,14 @@ export function PdfSigner() {
               <Card className="border-green-500">
                 <CardContent className="flex flex-col gap-4 pt-6">
                   <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                    >
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
                     <span className="text-sm font-semibold">Document Signed Successfully</span>
@@ -536,6 +567,11 @@ export function PdfSigner() {
                     <Badge variant="outline" className="text-xs">
                       {timestamped ? "✓ Timestamped" : "No timestamp"}
                     </Badge>
+                    {dssAdded && (
+                      <Badge variant="outline" className="text-xs">
+                        ✓ PAdES-B-LT
+                      </Badge>
+                    )}
                   </div>
 
                   <a href={signedPdfUrl} download={signedPdfFilename ?? "signed.pdf"} className="w-full">
