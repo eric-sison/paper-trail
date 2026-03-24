@@ -1,68 +1,64 @@
 /**
  * @file signer.ts
  *
- * Orchestrates the full PNPKI PDF signing pipeline:
+ * Orchestrates the full PAdES PDF signing pipeline:
  *
- *   1. Parse the .p12 file          — extract private key, cert chain, cert info
- *   2. Guard checks                 — reject expired certs, warn if expiring soon
- *   3. OCSP check                   — verify cert is not revoked (non-blocking)
- *   4. Draw signature appearance    — add visible stamp to the PDF page
- *   5. Add ByteRange placeholder    — reserve space for the CMS signature bytes
- *   6. Sign with @signpdf           — build CMS SignedData, RSA-SHA256 sign
- *   7. Extract CMS from signed PDF  — locate /Contents, trim zero padding
- *   8. Request TSA timestamp        — RFC 3161 token proving time of signing
- *   9. Inject timestamp into CMS    — add token as unsigned attribute
- *  10. Write patched CMS back       — return the final signed PDF buffer
+ *   1.  Parse + validate .p12    — private key, cert chain, cert info
+ *   2.  Input validation         — size limits, expired cert checks
+ *   3.  OCSP check               — revocation check with CRL fallback + retry
+ *   4.  Draw signature stamp     — visible appearance on PDF page
+ *   5.  ByteRange placeholder    — reserve CMS space with ETSI.CAdES subfilter
+ *   6.  Sign                     — RSA-SHA256 CMS SignedData
+ *   7.  TSA timestamp            — RFC 3161 token injection with retry
+ *   8.  DSS dictionary           — PAdES-B-LT via incremental PDF update
  *
- * OCSP and TSA are injectable via SignOptions:
- *   options.ocspChecker  — defaults to checkOCSP, pass a mock in tests
- *   options.tsaRequester — defaults to requestTimestamp, pass a mock in tests
- *
- * Signing is non-destructive — the original PDF buffer is never modified.
+ * Phase changes from v1:
+ *   1a. ETSI.CAdES.detached subfilter (true PAdES compliance)
+ *   1b. DSS dictionary (PAdES-B-LT)
+ *   2a. Proper ByteRange parser (no regex)
+ *   2c. Chain validation in parseP12
+ *   3a. Password wiping (best effort)
+ *   3b. Input size limits inside the library
+ *   4a. CRL fallback in checkOCSP
+ *   4b. Retry logic in OCSP + TSA
  */
 
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { pdflibAddPlaceholder } from "@signpdf/placeholder-pdf-lib";
 import { P12Signer } from "@signpdf/signer-p12";
+import { SUBFILTER_ETSI_CADES_DETACHED } from "@signpdf/utils";
 import { createRequire } from "module";
 import forge from "node-forge";
 
 import { parseP12 } from "./cert-utils.js";
 import { checkOCSP } from "./ocsp.js";
 import { requestTimestamp, injectTimestampIntoCMS } from "./tsa.js";
+import { findByteRange, extractContentsHex } from "./pdf-parser.js";
+import { appendDSSDictionary, certToDer } from "./dss.js";
+import { DEFAULT_OCSP_RETRY, DEFAULT_TSA_RETRY } from "./retry.js";
 
 import type { SignOptions, SignResult, CertInfo, OCSPResult } from "../types.js";
-import { CertExpiredError, CertRevokedError, InvalidPasswordError, InvalidPdfError } from "../types.js";
+import { CertExpiredError, CertRevokedError, InvalidPdfError, InvalidPasswordError } from "../types.js";
 
 export type { SignOptions, SignResult, CertInfo, OCSPResult };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Defaults ─────────────────────────────────────────────────────────────────
 
-/**
- * Reserved byte length for the CMS signature placeholder in the PDF.
- * Must accommodate: cert chain (~4KB) + CMS (~1KB) + TSA token (~3KB) + overhead.
- * Increase if you see "exceeds placeholder size" errors.
- */
-const SIGNATURE_LENGTH = 32768;
-
+const SIGNATURE_LENGTH = 32768; // 32KB — accommodates chain + TSA token
 const FALLBACK_OCSP_URL = "http://ocsp.npki.gov.ph";
 const FALLBACK_TSA_URL = "http://tsa.npki.gov.ph";
+const DEFAULT_MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+const DEFAULT_MAX_P12_SIZE = 5 * 1024 * 1024; // 5MB
 
 // ─── Step 4: Signature Appearance ────────────────────────────────────────────
 
-/**
- * Draws a visible signature stamp on the target PDF page.
- *
- * If options.signatureImage is provided, the stamp shows only the image
- * (aspect-ratio preserved, no stretching). Otherwise it shows the standard
- * PNPKI text stamp (name, org, date, reason, location, serial number).
- *
- * Mutates the PDFDocument in place.
- */
-async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, options: SignOptions): Promise<void> {
+async function drawSignatureAppearance(
+  pdfDoc: PDFDocument,
+  certInfo: CertInfo,
+  options: SignOptions
+): Promise<void> {
   const pages = pdfDoc.getPages();
   const pos = options.signaturePosition;
-
   const pageIdx = pos ? Math.min(pos.page - 1, pages.length - 1) : pages.length - 1;
 
   const page = pages[pageIdx];
@@ -82,7 +78,8 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontOblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
 
-  // Text stamp — shown when no image is provided
+  const stampHeader = options.stampHeader ?? "DIGITALLY SIGNED BY PNPKI";
+
   const drawTextStamp = () => {
     page.drawRectangle({
       x: boxX,
@@ -93,7 +90,6 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
       borderColor: NAVY,
       borderWidth: 1.5,
     });
-
     page.drawRectangle({
       x: boxX,
       y: boxY,
@@ -102,26 +98,26 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
       color: NAVY,
     });
 
-    const textX = boxX + 12;
+    const tx = boxX + 12;
 
-    page.drawText("DIGITALLY SIGNED BY PNPKI", {
-      x: textX,
+    page.drawText(stampHeader, {
+      x: tx,
       y: boxY + BOX_H - 13,
       size: 5.5,
       font: fontBold,
       color: NAVY,
     });
-
     page.drawLine({
-      start: { x: textX, y: boxY + BOX_H - 16 },
+      start: { x: tx, y: boxY + BOX_H - 16 },
       end: { x: boxX + BOX_W - 8, y: boxY + BOX_H - 16 },
       thickness: 0.5,
       color: NAVY,
     });
 
-    const nameText = certInfo.commonName.length > 32 ? certInfo.commonName.slice(0, 29) + "..." : certInfo.commonName;
+    const nameText =
+      certInfo.commonName.length > 32 ? certInfo.commonName.slice(0, 29) + "..." : certInfo.commonName;
     page.drawText(nameText, {
-      x: textX,
+      x: tx,
       y: boxY + BOX_H - 27,
       size: 7.5,
       font: fontBold,
@@ -130,9 +126,11 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
     if (certInfo.organization) {
       const orgText =
-        certInfo.organization.length > 38 ? certInfo.organization.slice(0, 35) + "..." : certInfo.organization;
+        certInfo.organization.length > 38
+          ? certInfo.organization.slice(0, 35) + "..."
+          : certInfo.organization;
       page.drawText(orgText, {
-        x: textX,
+        x: tx,
         y: boxY + BOX_H - 37,
         size: 6,
         font: fontRegular,
@@ -142,7 +140,7 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
     const signDate = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     page.drawText(`Date: ${signDate}`, {
-      x: textX,
+      x: tx,
       y: boxY + BOX_H - 49,
       size: 5.5,
       font: fontRegular,
@@ -151,7 +149,7 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
     const reasonText = (options.reason || "I have reviewed this document").slice(0, 40);
     page.drawText(`Reason: ${reasonText}`, {
-      x: textX,
+      x: tx,
       y: boxY + BOX_H - 59,
       size: 5.5,
       font: fontRegular,
@@ -160,7 +158,7 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
     const locationText = (options.location || "Philippines").slice(0, 40);
     page.drawText(`Location: ${locationText}`, {
-      x: textX,
+      x: tx,
       y: boxY + BOX_H - 69,
       size: 5.5,
       font: fontRegular,
@@ -178,24 +176,41 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
   if (options.signatureImage) {
     try {
-      const image = await pdfDoc.embedPng(options.signatureImage).catch(() => pdfDoc.embedJpg(options.signatureImage!));
+      const image = await pdfDoc
+        .embedPng(options.signatureImage)
+        .catch(() => pdfDoc.embedJpg(options.signatureImage!));
 
       const imgDims = image.size();
       const imgRatio = imgDims.width / imgDims.height;
-      const drawW = BOX_W;
-      const drawH = BOX_W / imgRatio;
+      const boxRatio = BOX_W / BOX_H;
+
+      // Contain fit — respect both BOX_W and BOX_H
+      let drawW: number;
+      let drawH: number;
+
+      if (imgRatio > boxRatio) {
+        // Image wider than box — constrain by width
+        drawW = BOX_W;
+        drawH = BOX_W / imgRatio;
+      } else {
+        // Image taller than box — constrain by height
+        drawH = BOX_H;
+        drawW = BOX_H * imgRatio;
+      }
+
+      // Center within the box
+      const offsetX = (BOX_W - drawW) / 2;
+      const offsetY = (BOX_H - drawH) / 2;
 
       page.drawImage(image, {
-        x: boxX,
-        y: boxY,
+        x: boxX + offsetX,
+        y: boxY + offsetY,
         width: drawW,
         height: drawH,
       });
     } catch {
       drawTextStamp();
     }
-  } else {
-    drawTextStamp();
   }
 }
 
@@ -203,10 +218,7 @@ async function drawSignatureAppearance(pdfDoc: PDFDocument, certInfo: CertInfo, 
 
 /**
  * Trims trailing null bytes from a zero-padded DER buffer.
- *
- * PDF signature placeholders are padded with 0x00 to fill reserved space.
- * forge.asn1.fromDer throws "Unparsed DER bytes remain" if given a padded
- * buffer, so we read the DER length header to find the real end.
+ * PDF /Contents placeholders are padded with 0x00 — forge rejects them without trimming.
  */
 export function trimDerBuffer(buf: Buffer): Buffer {
   if (buf.length < 4 || buf[0] !== 0x30) return buf;
@@ -229,8 +241,6 @@ export function trimDerBuffer(buf: Buffer): Buffer {
 /**
  * Extracts the raw signature value bytes from a CMS SignedData DER buffer.
  * These bytes are hashed and sent to the TSA.
- *
- * Navigates: ContentInfo → SignedData → signerInfos → SignerInfo → signature
  */
 export function extractSignatureValueFromCMS(cmsDer: Buffer): Buffer {
   const asn1 = forge.asn1.fromDer(cmsDer.toString("binary"));
@@ -250,94 +260,101 @@ export function extractSignatureValueFromCMS(cmsDer: Buffer): Buffer {
   throw new Error("Could not find signature value in CMS SignerInfo.");
 }
 
-// ─── Step 7-10: TSA Injection ─────────────────────────────────────────────────
+// ─── Steps 7–10: TSA Injection ────────────────────────────────────────────────
 
-/**
- * Post-processes a signed PDF to inject a TSA timestamp token.
- *
- * @signpdf has no TSA support, so we:
- *   1. Locate /ByteRange and /Contents in the signed PDF
- *   2. Decode /Contents hex → trim zero padding → parse CMS
- *   3. Extract signature value → request TSA token
- *   4. Inject token as unsigned attribute
- *   5. Write patched CMS back into the PDF
- */
 async function injectTSAIntoSignedPdf(
   signedPdf: Buffer,
   tsaUrl: string,
-  tsaRequester: (bytes: Buffer, url: string, timeout?: number) => Promise<Buffer>,
-  timeoutMs: number
-): Promise<Buffer> {
-  const pdfStr = signedPdf.toString("binary");
+  tsaRequester: SignOptions["tsaRequester"],
+  timeoutMs: number,
+  retryOptions: SignOptions["tsaRetryOptions"]
+): Promise<{ pdfBuffer: Buffer; signatureValueBytes: Buffer }> {
+  // Phase 2a: Use proper byte-level ByteRange parser instead of regex
+  const byteRange = findByteRange(signedPdf);
+  if (!byteRange) throw new Error("Could not locate /ByteRange in signed PDF.");
 
-  const byteRangeMatch = pdfStr.match(/\/ByteRange\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]/);
-  if (!byteRangeMatch) throw new Error("Could not find /ByteRange in signed PDF.");
-
-  const b0 = parseInt(byteRangeMatch[1], 10);
-  const b1 = parseInt(byteRangeMatch[2], 10);
-  const b2 = parseInt(byteRangeMatch[3], 10);
-
-  const contentsStart = b0 + b1 + 1;
-  const contentsEnd = b2 - 1;
-  const contentsHex = pdfStr.slice(contentsStart, contentsEnd);
-
+  const contentsHex = extractContentsHex(signedPdf, byteRange);
   const cmsDer = trimDerBuffer(Buffer.from(contentsHex, "hex"));
   const signatureValueBytes = extractSignatureValueFromCMS(cmsDer);
-  const tsTokenDer = await tsaRequester(signatureValueBytes, tsaUrl, timeoutMs);
+
+  const actualTsaRequester = tsaRequester ?? requestTimestamp;
+  const tsTokenDer = await actualTsaRequester(signatureValueBytes, tsaUrl, timeoutMs);
+
   const patchedCmsDer = injectTimestampIntoCMS(cmsDer, tsTokenDer);
 
   if (patchedCmsDer.length * 2 > contentsHex.length) {
     throw new Error(
-      `TSA-patched CMS (${patchedCmsDer.length * 2} hex chars) exceeds ` +
-        `placeholder size (${contentsHex.length} hex chars). ` +
-        `Increase SIGNATURE_LENGTH in signer.ts.`
+      `Patched CMS (${patchedCmsDer.length * 2} hex) exceeds placeholder ` +
+        `(${contentsHex.length} hex). Increase SIGNATURE_LENGTH.`
     );
   }
 
+  const [b0, b1] = byteRange;
+  const contentsStart = b0 + b1 + 1;
   const patchedHex = patchedCmsDer.toString("hex").padEnd(contentsHex.length, "0");
   const result = Buffer.from(signedPdf);
   result.write(patchedHex, contentsStart, "ascii");
 
-  return result;
+  return { pdfBuffer: result, signatureValueBytes };
 }
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 /**
- * Signs a PDF document using a PNPKI certificate.
+ * Signs a PDF document producing a PAdES-B-LT compliant signature.
  *
- * OCSP and TSA are injectable via options:
- *   options.ocspChecker  — pass a mock to skip real OCSP in tests
- *   options.tsaRequester — pass a mock to skip real TSA in tests
- *   options.skipOCSP     — skip OCSP entirely
- *   options.skipTSA      — skip TSA entirely
+ * Produces:
+ *   - ETSI.CAdES.detached subfilter (true PAdES)
+ *   - RFC 3161 timestamp
+ *   - DSS dictionary with embedded OCSP + certificate chain
  *
- * @throws {InvalidPasswordError} If the P12 password is wrong
- * @throws {InvalidP12Error}      If the P12 file is invalid
- * @throws {InvalidPdfError}      If the PDF file is invalid
- * @throws {CertExpiredError}     If the certificate has expired
- * @throws {CertRevokedError}     If the certificate has been revoked
+ * @throws {InvalidPdfError}      PDF buffer is invalid or too large
+ * @throws {InvalidP12Error}      P12 buffer is invalid
+ * @throws {InvalidPasswordError} Wrong P12 password
+ * @throws {CertExpiredError}     Certificate has expired
+ * @throws {CertRevokedError}     Certificate has been revoked
  */
 export async function signPDF(options: SignOptions): Promise<SignResult> {
   const warnings: string[] = [];
 
-  // ── Step 1: Parse .p12 ──────────────────────────────────────────────────
+  // ── Phase 3b: Input size validation ────────────────────────────────────
+  const maxPdf = options.maxPdfSize ?? DEFAULT_MAX_PDF_SIZE;
+  const maxP12 = options.maxP12Size ?? DEFAULT_MAX_P12_SIZE;
+
+  if (options.pdfBuffer.length > maxPdf) {
+    throw new InvalidPdfError(
+      `PDF size (${(options.pdfBuffer.length / 1024 / 1024).toFixed(1)}MB) ` +
+        `exceeds limit (${maxPdf / 1024 / 1024}MB).`
+    );
+  }
+
+  if (options.p12Buffer.length > maxP12) {
+    throw new Error(
+      `P12 size (${(options.p12Buffer.length / 1024).toFixed(1)}KB) ` + `exceeds limit (${maxP12 / 1024}KB).`
+    );
+  }
+
+  // ── Step 1: Parse .p12 (Phase 3a: password wiped in parseP12) ──────────
   const { certInfo, certChain } = parseP12(options.p12Buffer, options.password);
 
-  // ── Step 2: Guard checks ─────────────────────────────────────────────────
+  // ── Step 2: Guard checks ────────────────────────────────────────────────
   if (certInfo.isExpired) {
     throw new CertExpiredError(certInfo.validTo.toLocaleDateString());
   }
 
   if (certInfo.daysUntilExpiry <= 30) {
     warnings.push(
-      `Certificate expires in ${certInfo.daysUntilExpiry} day(s) ` + `on ${certInfo.validTo.toLocaleDateString()}.`
+      `Certificate expires in ${certInfo.daysUntilExpiry} day(s) ` +
+        `on ${certInfo.validTo.toLocaleDateString()}.`
     );
   }
 
-  // ── Step 3: OCSP check ───────────────────────────────────────────────────
+  // ── Step 3: OCSP check with CRL fallback + retry ────────────────────────
   const ocspChecker = options.ocspChecker ?? checkOCSP;
   const ocspTimeoutMs = options.ocspTimeoutMs ?? 8000;
+  const ocspRetry = options.ocspRetryOptions ?? DEFAULT_OCSP_RETRY;
+  const enableCRL = options.enableCRLFallback ?? true;
+  const fallbackOcspUrl = options.fallbackOcspUrl ?? FALLBACK_OCSP_URL;
 
   let ocspResult: OCSPResult = {
     status: "unknown",
@@ -345,13 +362,20 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
   };
 
   if (!options.skipOCSP && certChain.length >= 2) {
-    ocspResult = await ocspChecker(certChain[0], certChain[1], certInfo.ocspUrl ?? FALLBACK_OCSP_URL, ocspTimeoutMs);
+    ocspResult = await ocspChecker(
+      certChain[0],
+      certChain[1],
+      certInfo.ocspUrl ?? fallbackOcspUrl,
+      ocspTimeoutMs,
+      ocspRetry,
+      enableCRL
+    );
 
     if (ocspResult.status === "revoked") throw new CertRevokedError();
     if (ocspResult.status === "unreachable") warnings.push(ocspResult.message);
   }
 
-  // ── Step 4: Draw visible signature appearance ────────────────────────────
+  // ── Step 4: Draw visible signature appearance ───────────────────────────
   let pdfDoc: PDFDocument;
   try {
     pdfDoc = await PDFDocument.load(options.pdfBuffer);
@@ -362,23 +386,31 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
   await drawSignatureAppearance(pdfDoc, certInfo, options);
   const pdfWithAppearance = Buffer.from(await pdfDoc.save({ useObjectStreams: false }));
 
-  // ── Step 5: Add ByteRange placeholder ───────────────────────────────────
+  // ── Step 5: ByteRange placeholder (Phase 1a: ETSI.CAdES.detached) ──────
   const pdfDoc2 = await PDFDocument.load(pdfWithAppearance);
   pdflibAddPlaceholder({
     pdfDoc: pdfDoc2,
     reason: options.reason || "I have reviewed this document",
-    contactInfo: certInfo.email || "pnpki@dict.gov.ph",
+    contactInfo: options.contactInfo ?? certInfo.email ?? "pnpki@dict.gov.ph",
     name: certInfo.commonName,
     location: options.location || "Philippines",
     signatureLength: SIGNATURE_LENGTH,
+    subFilter: SUBFILTER_ETSI_CADES_DETACHED,
   });
   const pdfWithPlaceholder = Buffer.from(await pdfDoc2.save({ useObjectStreams: false }));
 
-  // ── Step 6: Sign with @signpdf ───────────────────────────────────────────
+  // ── Step 6: Sign ────────────────────────────────────────────────────────
   const require = createRequire(import.meta.url);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const signpdf = (require("@signpdf/signpdf") as { default: { sign: Function } }).default;
-  const p12Signer = new P12Signer(options.p12Buffer, { passphrase: options.password });
+
+  const passwordStr = (
+    options.password instanceof Buffer ? options.password.toString("utf8") : options.password
+  ) as string;
+
+  const p12Signer = new P12Signer(options.p12Buffer, {
+    passphrase: passwordStr,
+  });
 
   let signedPdf: Buffer;
   try {
@@ -391,24 +423,58 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
     throw err;
   }
 
-  // ── Steps 7-10: TSA injection ────────────────────────────────────────────
-  const tsaRequester = options.tsaRequester ?? requestTimestamp;
+  // ── Steps 7–8: TSA timestamp ────────────────────────────────────────────
+  const tsaUrl = certInfo.tsaUrl ?? options.fallbackTsaUrl ?? FALLBACK_TSA_URL;
   const tsaTimeoutMs = options.tsaTimeoutMs ?? 10000;
-  const tsaUrl = certInfo.tsaUrl ?? FALLBACK_TSA_URL;
+  const tsaRetry = options.tsaRetryOptions ?? DEFAULT_TSA_RETRY;
 
   let timestamped = false;
+  let signatureValueBytes: Buffer | null = null;
 
   if (!options.skipTSA) {
     try {
-      signedPdf = await injectTSAIntoSignedPdf(signedPdf, tsaUrl, tsaRequester, tsaTimeoutMs);
+      const result = await injectTSAIntoSignedPdf(
+        signedPdf,
+        tsaUrl,
+        options.tsaRequester,
+        tsaTimeoutMs,
+        tsaRetry
+      );
+      signedPdf = result.pdfBuffer;
+      signatureValueBytes = result.signatureValueBytes;
       timestamped = true;
     } catch (err) {
       warnings.push(
         `TSA timestamp could not be applied: ${(err as Error).message}. ` +
-          `The signature is valid but may not support long-term verification.`
+          `Signature is valid but may not support long-term verification.`
       );
     }
   }
 
-  return { signedPdf, certInfo, ocspResult, timestamped, warnings };
+  // ── Phase 1b: DSS dictionary (PAdES-B-LT) ──────────────────────────────
+  let dssAdded = false;
+
+  if (!options.skipDSS && signatureValueBytes) {
+    try {
+      const certsDer = certChain.map(certToDer);
+      const ocspsDer = ocspResult.responseBytes ? [ocspResult.responseBytes] : [];
+
+      signedPdf = appendDSSDictionary(signedPdf, certsDer, ocspsDer, signatureValueBytes);
+      dssAdded = true;
+    } catch (err) {
+      warnings.push(
+        `DSS dictionary could not be added: ${(err as Error).message}. ` +
+          `Signature is valid but long-term validation data is not embedded.`
+      );
+    }
+  }
+
+  return {
+    signedPdf,
+    certInfo,
+    ocspResult,
+    timestamped,
+    dssAdded,
+    warnings,
+  };
 }
