@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import forge from "node-forge";
-import { extractTSToken, injectTimestampIntoCMS } from "../lib/tsa.js";
-import { TSAError } from "../types.js";
+import { buildTSRequest, extractTSToken, injectTimestampIntoCMS } from "../lib/tsa.js";
+import { TSAError } from "../lib/errors.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,12 @@ import { TSAError } from "../types.js";
  */
 function buildFakeTSResponse(statusCode: number, includeToken: boolean): Buffer {
   const status = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
-    forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.INTEGER, false, String.fromCharCode(statusCode)),
+    forge.asn1.create(
+      forge.asn1.Class.UNIVERSAL,
+      forge.asn1.Type.INTEGER,
+      false,
+      String.fromCharCode(statusCode)
+    ),
   ]);
 
   const nodes: forge.asn1.Asn1[] = [status];
@@ -139,5 +144,35 @@ describe("injectTimestampIntoCMS", () => {
 
     // Should not throw
     expect(() => forge.asn1.fromDer(patched.toString("binary"))).not.toThrow();
+  });
+});
+
+// ─── buildTSRequest ───────────────────────────────────────────────────────────
+
+describe("buildTSRequest", () => {
+  it("returns a Buffer", () => {
+    const hash = Buffer.alloc(32, 0xab);
+    expect(Buffer.isBuffer(buildTSRequest(hash))).toBe(true);
+  });
+
+  it("produces a valid DER SEQUENCE parseable by forge", () => {
+    const hash = Buffer.alloc(32, 0x01);
+    const req = buildTSRequest(hash);
+    expect(() => forge.asn1.fromDer(req.toString("binary"))).not.toThrow();
+  });
+
+  it("contains the SHA-256 OID (2.16.840.1.101.3.4.2.1)", () => {
+    const hash = Buffer.alloc(32, 0x02);
+    const req = buildTSRequest(hash);
+    // OID bytes appear in the DER output
+    const sha256OidDer = forge.asn1.oidToDer("2.16.840.1.101.3.4.2.1").getBytes();
+    expect(req.toString("binary")).toContain(sha256OidDer);
+  });
+
+  it("produces different output on each call due to random nonce", () => {
+    const hash = Buffer.alloc(32, 0x03);
+    const req1 = buildTSRequest(hash);
+    const req2 = buildTSRequest(hash);
+    expect(req1.equals(req2)).toBe(false);
   });
 });

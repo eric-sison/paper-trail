@@ -15,7 +15,7 @@
 import forge from "node-forge";
 import crypto from "crypto";
 import type { RetryOptions } from "../types.js";
-import { TSAError } from "../types.js";
+import { TSAError } from "../lib/errors.js";
 import { withRetry, DEFAULT_TSA_RETRY } from "./retry.js";
 
 // ─── Pure: Request Builder ────────────────────────────────────────────────────
@@ -38,7 +38,12 @@ export function buildTSRequest(hashBuffer: Buffer): Buffer {
 
   const messageImprint = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
     sha256AlgId,
-    forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.OCTETSTRING, false, hashBuffer.toString("binary")),
+    forge.asn1.create(
+      forge.asn1.Class.UNIVERSAL,
+      forge.asn1.Type.OCTETSTRING,
+      false,
+      hashBuffer.toString("binary")
+    ),
   ]);
 
   const nonceBytes = crypto.randomBytes(8).toString("binary");

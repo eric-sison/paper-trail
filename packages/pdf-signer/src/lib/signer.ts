@@ -90,6 +90,7 @@ async function drawSignatureAppearance(
       borderColor: NAVY,
       borderWidth: 1.5,
     });
+
     page.drawRectangle({
       x: boxX,
       y: boxY,
@@ -107,6 +108,7 @@ async function drawSignatureAppearance(
       font: fontBold,
       color: NAVY,
     });
+
     page.drawLine({
       start: { x: tx, y: boxY + BOX_H - 16 },
       end: { x: boxX + BOX_W - 8, y: boxY + BOX_H - 16 },
@@ -116,6 +118,7 @@ async function drawSignatureAppearance(
 
     const nameText =
       certInfo.commonName.length > 32 ? certInfo.commonName.slice(0, 29) + "..." : certInfo.commonName;
+
     page.drawText(nameText, {
       x: tx,
       y: boxY + BOX_H - 27,
@@ -129,6 +132,7 @@ async function drawSignatureAppearance(
         certInfo.organization.length > 38
           ? certInfo.organization.slice(0, 35) + "..."
           : certInfo.organization;
+
       page.drawText(orgText, {
         x: tx,
         y: boxY + BOX_H - 37,
@@ -235,7 +239,7 @@ export function trimDerBuffer(buf: Buffer): Buffer {
     realLength = 2 + numLenBytes + len;
   }
 
-  return buf.slice(0, realLength);
+  return buf.subarray(0, realLength);
 }
 
 /**
@@ -269,7 +273,6 @@ async function injectTSAIntoSignedPdf(
   timeoutMs: number,
   retryOptions: SignOptions["tsaRetryOptions"]
 ): Promise<{ pdfBuffer: Buffer; signatureValueBytes: Buffer }> {
-  // Phase 2a: Use proper byte-level ByteRange parser instead of regex
   const byteRange = findByteRange(signedPdf);
   if (!byteRange) throw new Error("Could not locate /ByteRange in signed PDF.");
 
@@ -278,24 +281,44 @@ async function injectTSAIntoSignedPdf(
   const signatureValueBytes = extractSignatureValueFromCMS(cmsDer);
 
   const actualTsaRequester = tsaRequester ?? requestTimestamp;
-  const tsTokenDer = await actualTsaRequester(signatureValueBytes, tsaUrl, timeoutMs);
 
-  const patchedCmsDer = injectTimestampIntoCMS(cmsDer, tsTokenDer);
+  const maxRetries = retryOptions?.retries ?? 0;
+  const delayMs = retryOptions?.initialDelayMs ?? 1000;
+  const backoffFactor = retryOptions?.backoffFactor ?? 1;
 
-  if (patchedCmsDer.length * 2 > contentsHex.length) {
-    throw new Error(
-      `Patched CMS (${patchedCmsDer.length * 2} hex) exceeds placeholder ` +
-        `(${contentsHex.length} hex). Increase SIGNATURE_LENGTH.`
-    );
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const tsTokenDer = await actualTsaRequester(signatureValueBytes, tsaUrl, timeoutMs);
+
+      const patchedCmsDer = injectTimestampIntoCMS(cmsDer, tsTokenDer);
+
+      if (patchedCmsDer.length * 2 > contentsHex.length) {
+        throw new Error(
+          `Patched CMS (${patchedCmsDer.length * 2} hex) exceeds placeholder ` +
+            `(${contentsHex.length} hex). Increase SIGNATURE_LENGTH.`
+        );
+      }
+
+      const [b0, b1] = byteRange;
+      const contentsStart = b0 + b1 + 1;
+      const patchedHex = patchedCmsDer.toString("hex").padEnd(contentsHex.length, "0");
+      const result = Buffer.from(signedPdf);
+      result.write(patchedHex, contentsStart, "ascii");
+
+      return { pdfBuffer: result, signatureValueBytes };
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const shouldRetry = retryOptions?.shouldRetry;
+        if (shouldRetry && !shouldRetry(err as Error)) break;
+        const wait = delayMs * Math.pow(backoffFactor, attempt);
+        await new Promise((res) => setTimeout(res, wait));
+      }
+    }
   }
 
-  const [b0, b1] = byteRange;
-  const contentsStart = b0 + b1 + 1;
-  const patchedHex = patchedCmsDer.toString("hex").padEnd(contentsHex.length, "0");
-  const result = Buffer.from(signedPdf);
-  result.write(patchedHex, contentsStart, "ascii");
-
-  return { pdfBuffer: result, signatureValueBytes };
+  throw lastError;
 }
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────

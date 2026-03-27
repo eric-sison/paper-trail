@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
 import { signPDF } from "../lib/signer.js";
-import { CertExpiredError, CertRevokedError, InvalidPasswordError, InvalidPdfError } from "../types.js";
+import { CertExpiredError, CertRevokedError, InvalidPasswordError, InvalidPdfError } from "../lib/errors.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
@@ -80,6 +80,10 @@ describe("signPDF", () => {
       skipOCSP: true,
       skipTSA: false,
       tsaRequester: mockTsaRequester,
+      tsaRetryOptions: {
+        retries: 0,
+        initialDelayMs: 0,
+      },
     });
 
     // TSA was called but token was fake so timestamped may be false
@@ -152,5 +156,46 @@ describe("signPDF", () => {
     });
 
     expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it("throws InvalidPdfError when PDF exceeds maxPdfSize", async () => {
+    await expect(
+      signPDF({
+        pdfBuffer,
+        p12Buffer,
+        password: PASSWORD,
+        skipOCSP: true,
+        skipTSA: true,
+        maxPdfSize: 1,
+      })
+    ).rejects.toThrow(InvalidPdfError);
+  });
+
+  it("throws when P12 exceeds maxP12Size", async () => {
+    await expect(
+      signPDF({
+        pdfBuffer,
+        p12Buffer,
+        password: PASSWORD,
+        skipOCSP: true,
+        skipTSA: true,
+        maxP12Size: 1,
+      })
+    ).rejects.toThrow("exceeds limit");
+  });
+
+  it("adds warning and sets timestamped=false when TSA requester fails", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: false,
+      tsaRequester: vi.fn().mockRejectedValue(new Error("TSA unavailable")),
+      tsaRetryOptions: { retries: 0, initialDelayMs: 0 },
+    });
+
+    expect(result.timestamped).toBe(false);
+    expect(result.warnings.some((w) => w.includes("TSA timestamp could not be applied"))).toBe(true);
   });
 });

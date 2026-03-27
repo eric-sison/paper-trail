@@ -25,7 +25,7 @@ export {
   InvalidPdfError,
   OCSPError,
   TSAError,
-} from "./types.js";
+} from "./lib/errors.js";
 
 // Pure utilities — exported for testing and advanced use
 export { parseP12, extractCertInfo, extractAIAUrls, validateCertChain } from "./lib/cert-utils.js";
