@@ -198,4 +198,17 @@ describe("signPDF", () => {
     expect(result.timestamped).toBe(false);
     expect(result.warnings.some((w) => w.includes("TSA timestamp could not be applied"))).toBe(true);
   });
+
+  it("sets dssAdded=false when skipDSS is true", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      skipDSS: true,
+    });
+
+    expect(result.dssAdded).toBe(false);
+  });
 });

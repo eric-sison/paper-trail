@@ -38,4 +38,20 @@ describe("withRetry", () => {
     ).rejects.toThrow("fatal");
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("applies exponential backoff — each delay is larger than the last", async () => {
+    const timestamps: number[] = [];
+
+    const fn = vi.fn().mockImplementation(async () => {
+      timestamps.push(Date.now());
+      throw new Error("fail");
+    });
+
+    await expect(withRetry(fn, { retries: 2, initialDelayMs: 50, backoffFactor: 3 })).rejects.toThrow("fail");
+
+    expect(fn).toHaveBeenCalledTimes(3);
+    const gap1 = timestamps[1] - timestamps[0]; // ~50ms
+    const gap2 = timestamps[2] - timestamps[1]; // ~150ms (50 * 3)
+    expect(gap2).toBeGreaterThan(gap1);
+  });
 });
