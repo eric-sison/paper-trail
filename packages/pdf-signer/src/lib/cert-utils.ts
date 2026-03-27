@@ -10,7 +10,7 @@
 
 import forge from "node-forge";
 import type { CertInfo, ParsedP12 } from "../types.js";
-import { InvalidPasswordError, InvalidP12Error } from "../types.js";
+import { InvalidP12Error, InvalidPasswordError } from "./errors.js";
 
 /**
  * Parses a PKCS#12 file and extracts its contents.
@@ -37,6 +37,7 @@ export function parseP12(p12Buffer: Buffer, password: string | Buffer): ParsedP1
     ) {
       throw new InvalidPasswordError();
     }
+
     throw new InvalidP12Error();
   } finally {
     // Best-effort: wipe password from buffer memory if it was passed as Buffer

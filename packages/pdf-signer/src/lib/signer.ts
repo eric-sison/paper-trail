@@ -38,7 +38,7 @@ import { appendDSSDictionary, certToDer } from "./dss.js";
 import { DEFAULT_OCSP_RETRY, DEFAULT_TSA_RETRY } from "./retry.js";
 
 import type { SignOptions, SignResult, CertInfo, OCSPResult } from "../types.js";
-import { CertExpiredError, CertRevokedError, InvalidPdfError, InvalidPasswordError } from "../types.js";
+import { CertExpiredError, CertRevokedError, InvalidPdfError, InvalidPasswordError } from "./errors.js";
 
 export type { SignOptions, SignResult, CertInfo, OCSPResult };
 
