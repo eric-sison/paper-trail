@@ -1,6 +1,6 @@
 # paper-trail
 
-A monorepo for PDF signing with PAdES-B-LT compliance. Built with TanStack Start, Hono, and a custom PDF signing library backed by PNPKI certificates.
+A monorepo for managing and tracking documents throughout their lifecycle. Built with TanStack Start, Hono, and a custom PDF library backed by PNPKI certificates — with built-in support for PAdES-B-LT compliant digital signing.
 
 ## Structure
 
