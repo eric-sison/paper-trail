@@ -488,8 +488,9 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
     try {
       const certsDer = certChain.map(certToDer);
       const ocspsDer = ocspResult.responseBytes ? [ocspResult.responseBytes] : [];
+      const crlsDer = ocspResult.crlBytes ? [ocspResult.crlBytes] : [];
 
-      signedPdf = appendDSSDictionary(signedPdf, certsDer, ocspsDer, signatureValueBytes);
+      signedPdf = appendDSSDictionary(signedPdf, certsDer, ocspsDer, signatureValueBytes, crlsDer);
       dssAdded = true;
     } catch (err) {
       warnings.push(

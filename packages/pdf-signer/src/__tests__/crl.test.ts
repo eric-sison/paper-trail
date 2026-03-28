@@ -23,11 +23,20 @@ function buildFakeCRL(revokedSerials: string[]): Buffer {
 
   const tbsFields: forge.asn1.Asn1[] = [];
   if (revokedEntries.length > 0) {
-    tbsFields.push(forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, revokedEntries));
+    tbsFields.push(
+      forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, revokedEntries)
+    );
   }
 
-  const tbsCertList = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, tbsFields);
-  const certList = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [tbsCertList]);
+  const tbsCertList = forge.asn1.create(
+    forge.asn1.Class.UNIVERSAL,
+    forge.asn1.Type.SEQUENCE,
+    true,
+    tbsFields
+  );
+  const certList = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    tbsCertList,
+  ]);
 
   return Buffer.from(forge.asn1.toDer(certList).getBytes(), "binary");
 }
@@ -41,7 +50,11 @@ function mockFetchWithCRL(crlBuffer: Buffer): void {
     "fetch",
     vi.fn().mockResolvedValue({
       ok: true,
-      arrayBuffer: vi.fn().mockResolvedValue(crlBuffer.buffer.slice(crlBuffer.byteOffset, crlBuffer.byteOffset + crlBuffer.byteLength)),
+      arrayBuffer: vi
+        .fn()
+        .mockResolvedValue(
+          crlBuffer.buffer.slice(crlBuffer.byteOffset, crlBuffer.byteOffset + crlBuffer.byteLength)
+        ),
     })
   );
 }
@@ -159,5 +172,29 @@ describe("checkCRL", () => {
     );
     const result = await checkCRL(makeCert("deadbeef"), "http://crl.example.com");
     expect(result.status).toBe("unknown");
+  });
+
+  it("returns crlBytes on good status", async () => {
+    const crl = buildFakeCRL(["cafebabe"]);
+    mockFetchWithCRL(crl);
+    const result = await checkCRL(makeCert("deadbeef"), "http://crl.example.com");
+    expect(result.status).toBe("good");
+    expect(Buffer.isBuffer(result.crlBytes)).toBe(true);
+    expect(result.crlBytes!.length).toBeGreaterThan(0);
+  });
+
+  it("returns crlBytes on revoked status", async () => {
+    const crl = buildFakeCRL(["deadbeef"]);
+    mockFetchWithCRL(crl);
+    const result = await checkCRL(makeCert("deadbeef"), "http://crl.example.com");
+    expect(result.status).toBe("revoked");
+    expect(Buffer.isBuffer(result.crlBytes)).toBe(true);
+  });
+
+  it("does not return crlBytes when unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network failure")));
+    const result = await checkCRL(makeCert("deadbeef"), "http://crl.example.com");
+    expect(result.status).toBe("unreachable");
+    expect(result.crlBytes).toBeUndefined();
   });
 });

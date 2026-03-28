@@ -33,15 +33,17 @@ export function certToDer(cert: forge.pki.Certificate): Buffer {
  * @param certsDer         - DER-encoded certificates from the signing chain
  * @param ocspsDer         - DER-encoded OCSP responses (may be empty)
  * @param signatureValue   - Raw signature value bytes (used as VRI key)
+ * @param crlsDer          - DER-encoded CRL responses (used as fallback when OCSP is unavailable)
  */
 export function appendDSSDictionary(
   signedPdfBuffer: Buffer,
   certsDer: Buffer[],
   ocspsDer: Buffer[],
-  signatureValue: Buffer
+  signatureValue: Buffer,
+  crlsDer: Buffer[] = [] // ← accepted here
 ): Buffer {
   try {
-    return buildIncrementalUpdate(signedPdfBuffer, certsDer, ocspsDer, signatureValue);
+    return buildIncrementalUpdate(signedPdfBuffer, certsDer, ocspsDer, signatureValue, crlsDer); // ← passed through
   } catch {
     // DSS is additive — return valid signed PDF without DSS
     return signedPdfBuffer;
@@ -54,7 +56,8 @@ function buildIncrementalUpdate(
   pdfBuffer: Buffer,
   certsDer: Buffer[],
   ocspsDer: Buffer[],
-  signatureValue: Buffer
+  signatureValue: Buffer,
+  crlsDer: Buffer[] = [] // ← accepted here
 ): Buffer {
   const tail = parsePdfTail(pdfBuffer);
   if (!tail) throw new Error("Cannot parse PDF structure for DSS append");
@@ -99,15 +102,24 @@ function buildIncrementalUpdate(
     ocspNums.push(num);
   }
 
+  // ── CRL streams ───────────────────────────────────────────────────────────
+  const crlNums: number[] = [];
+  for (const crlDer of crlsDer) {
+    const num = nextObjNum++;
+    pushStream(num, crlDer);
+    crlNums.push(num);
+  }
+
   const certArr = certNums.length > 0 ? `[${certNums.map((n) => `${n} 0 R`).join(" ")}]` : "[]";
   const ocspArr = ocspNums.length > 0 ? `[${ocspNums.map((n) => `${n} 0 R`).join(" ")}]` : "[]";
+  const crlArr = crlNums.length > 0 ? `[${crlNums.map((n) => `${n} 0 R`).join(" ")}]` : "[]";
 
   // ── VRI entry ─────────────────────────────────────────────────────────────
   // VRI key: uppercase hex SHA-1 of the signature value bytes
   const vriKey = crypto.createHash("sha1").update(signatureValue).digest("hex").toUpperCase();
 
   const vriEntryNum = nextObjNum++;
-  pushObj(vriEntryNum, `<< /Cert ${certArr} /OCSP ${ocspArr} >>`);
+  pushObj(vriEntryNum, `<< /Cert ${certArr} /OCSP ${ocspArr} /CRL ${crlArr} >>`); // ← /CRL added
 
   // ── VRI dictionary ────────────────────────────────────────────────────────
   const vriDictNum = nextObjNum++;
@@ -115,7 +127,10 @@ function buildIncrementalUpdate(
 
   // ── DSS dictionary ────────────────────────────────────────────────────────
   const dssNum = nextObjNum++;
-  pushObj(dssNum, `<< /Type /DSS /Certs ${certArr} /OCSPs ${ocspArr} /VRI ${vriDictNum} 0 R >>`);
+  pushObj(
+    dssNum,
+    `<< /Type /DSS /Certs ${certArr} /OCSPs ${ocspArr} /CRLs ${crlArr} /VRI ${vriDictNum} 0 R >>`
+  ); // ← /CRLs added
 
   // ── Updated catalog (adds /DSS reference) ─────────────────────────────────
   const updatedCatalog = buildUpdatedCatalog(pdfBuffer, catalogNum, dssNum);

@@ -23,7 +23,9 @@ export function extractCRLUrl(cert: forge.pki.Certificate): string | null {
   try {
     // Parse the extension value as ASN.1
     const asn1 = forge.asn1.fromDer(
-      typeof crlExt.value === "string" ? crlExt.value : forge.asn1.toDer(crlExt.value as forge.asn1.Asn1).getBytes()
+      typeof crlExt.value === "string"
+        ? crlExt.value
+        : forge.asn1.toDer(crlExt.value as forge.asn1.Asn1).getBytes()
     );
 
     // CRLDistributionPoints ::= SEQUENCE OF DistributionPoint
@@ -67,7 +69,11 @@ function findUrlInAsn1(node: forge.asn1.Asn1): string | null {
  * @param crlUrl    - CRL distribution point URL
  * @param timeoutMs - Request timeout in ms
  */
-export async function checkCRL(cert: forge.pki.Certificate, crlUrl: string, timeoutMs = 10000): Promise<OCSPResult> {
+export async function checkCRL(
+  cert: forge.pki.Certificate,
+  crlUrl: string,
+  timeoutMs = 10000
+): Promise<OCSPResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -152,12 +158,15 @@ function parseCRLBuffer(cert: forge.pki.Certificate, crlBuffer: Buffer): OCSPRes
             const serialField = entryFields[0];
             if (serialField.type !== forge.asn1.Type.INTEGER) continue;
 
-            const revokedSerial = normalizeSerial(Buffer.from(serialField.value as string, "binary").toString("hex"));
+            const revokedSerial = normalizeSerial(
+              Buffer.from(serialField.value as string, "binary").toString("hex")
+            );
 
             if (revokedSerial === certSerialNorm) {
               return {
                 status: "revoked",
                 message: "Certificate found in CRL — has been revoked.",
+                crlBytes: crlBuffer,
               };
             }
           }
@@ -166,6 +175,7 @@ function parseCRLBuffer(cert: forge.pki.Certificate, crlBuffer: Buffer): OCSPRes
           return {
             status: "good",
             message: "Certificate not found in CRL — valid.",
+            crlBytes: crlBuffer,
           };
         }
       }
@@ -174,6 +184,7 @@ function parseCRLBuffer(cert: forge.pki.Certificate, crlBuffer: Buffer): OCSPRes
     return {
       status: "unknown",
       message: "Could not locate revokedCertificates in CRL.",
+      crlBytes: crlBuffer,
     };
   } catch (err) {
     return {

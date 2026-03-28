@@ -35,4 +35,33 @@ describe("appendDSSDictionary", () => {
 
     expect(result.toString("latin1")).toContain("/VRI");
   });
+
+  it("contains /CRLs in the output when CRL data is provided", () => {
+    const crlDer = Buffer.alloc(80, 0xdd);
+    const result = appendDSSDictionary(signedPdf, [Buffer.alloc(10, 0xaa)], [], Buffer.alloc(32, 0xcc), [
+      crlDer,
+    ]);
+
+    expect(result.toString("latin1")).toContain("/CRLs");
+  });
+
+  it("CRL entry appears in /VRI when CRL data is provided", () => {
+    const crlDer = Buffer.alloc(80, 0xdd);
+    const result = appendDSSDictionary(signedPdf, [], [], Buffer.alloc(32, 0xcc), [crlDer]);
+
+    expect(result.toString("latin1")).toContain("/CRL");
+  });
+
+  it("produces a larger buffer when CRL data is provided", () => {
+    const crlDer = Buffer.alloc(80, 0xdd);
+    const withoutCrl = appendDSSDictionary(signedPdf, [], [], Buffer.alloc(32, 0xcc));
+    const withCrl = appendDSSDictionary(signedPdf, [], [], Buffer.alloc(32, 0xcc), [crlDer]);
+
+    expect(withCrl.length).toBeGreaterThan(withoutCrl.length);
+  });
+
+  it("/CRLs is empty array when no CRL data provided", () => {
+    const result = appendDSSDictionary(signedPdf, [], [], Buffer.alloc(32, 0xcc));
+    expect(result.toString("latin1")).toContain("/CRLs []");
+  });
 });

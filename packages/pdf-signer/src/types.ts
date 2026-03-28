@@ -27,6 +27,8 @@ export interface OCSPResult {
   revokedAt?: Date;
   /** Raw DER bytes of the OCSP response — used for embedding in DSS */
   responseBytes?: Buffer;
+  /** Raw DER bytes of the CRL response — used for DSS embedding when OCSP is unreachable */
+  crlBytes?: Buffer;
 }
 
 /**
