@@ -188,21 +188,17 @@ async function drawSignatureAppearance(
       const imgRatio = imgDims.width / imgDims.height;
       const boxRatio = BOX_W / BOX_H;
 
-      // Contain fit — respect both BOX_W and BOX_H
       let drawW: number;
       let drawH: number;
 
       if (imgRatio > boxRatio) {
-        // Image wider than box — constrain by width
         drawW = BOX_W;
         drawH = BOX_W / imgRatio;
       } else {
-        // Image taller than box — constrain by height
         drawH = BOX_H;
         drawW = BOX_H * imgRatio;
       }
 
-      // Center within the box
       const offsetX = (BOX_W - drawW) / 2;
       const offsetY = (BOX_H - drawH) / 2;
 
@@ -215,6 +211,8 @@ async function drawSignatureAppearance(
     } catch {
       drawTextStamp();
     }
+  } else {
+    drawTextStamp();
   }
 }
 
@@ -357,6 +355,11 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
     );
   }
 
+  // ── Extract password string before parseP12 wipes the buffer ───────────
+  const passwordStr = (
+    options.password instanceof Buffer ? options.password.toString("utf8") : options.password
+  ) as string;
+
   // ── Step 1: Parse .p12 (Phase 3a: password wiped in parseP12) ──────────
   const { certInfo, certChain } = parseP12(options.p12Buffer, options.password);
 
@@ -451,10 +454,6 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
   const require = createRequire(import.meta.url);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const signpdf = (require("@signpdf/signpdf") as { default: { sign: Function } }).default;
-
-  const passwordStr = (
-    options.password instanceof Buffer ? options.password.toString("utf8") : options.password
-  ) as string;
 
   const p12Signer = new P12Signer(options.p12Buffer, {
     passphrase: passwordStr,

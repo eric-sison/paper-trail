@@ -33,6 +33,21 @@ vi.mock("../lib/cert-utils.js", async (importOriginal) => {
 
 const mockParseP12 = vi.mocked(parseP12);
 
+const validCertInfoNoUrls: CertInfo = {
+  commonName: "Test User",
+  organization: "Test Org",
+  email: "test@test.com",
+  serialNumber: "01",
+  validFrom: new Date("2023-01-01"),
+  validTo: new Date("2099-01-01"),
+  issuerCN: "Test CA",
+  isExpired: false,
+  daysUntilExpiry: 999,
+  ocspUrl: null,
+  tsaUrl: null,
+  crlUrl: null,
+};
+
 const expiredCertInfo: CertInfo = {
   commonName: "Test User",
   organization: "Test Org",
@@ -275,5 +290,307 @@ describe("signPDF", () => {
     });
 
     expect(result.warnings.some((w) => w.includes("expired"))).toBe(true);
+  });
+
+  // ─── Additional SignOptions coverage ─────────────────────────────────────────
+  // Append these tests inside the existing describe("signPDF", ...) block
+  // in signPDF.test.ts, after the rejectIfExpired tests.
+
+  // ── Shared fixture for tests that need to control certInfo ────────────────────
+  // Add this alongside expiredCertInfo at the top of the file:
+  //
+  // const validCertInfoNoUrls: CertInfo = {
+  //   commonName: "Test User",
+  //   organization: "Test Org",
+  //   email: "test@test.com",
+  //   serialNumber: "01",
+  //   validFrom: new Date("2023-01-01"),
+  //   validTo: new Date("2099-01-01"),
+  //   issuerCN: "Test CA",
+  //   isExpired: false,
+  //   daysUntilExpiry: 999,
+  //   ocspUrl: null,   // ← forces fallback URL usage
+  //   tsaUrl: null,    // ← forces fallback URL usage
+  //   crlUrl: null,
+  // };
+
+  // ─── password as Buffer ───────────────────────────────────────────────────────
+
+  it("accepts password as Buffer", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: Buffer.from(PASSWORD, "utf8"),
+      skipOCSP: true,
+      skipTSA: true,
+    });
+
+    expect(Buffer.isBuffer(result.signedPdf)).toBe(true);
+  });
+
+  // ─── enableCRLFallback ────────────────────────────────────────────────────────
+
+  it("passes enableCRLFallback=false to ocspChecker", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      enableCRLFallback: false,
+      ocspChecker: checker,
+    });
+
+    // 6th argument to ocspChecker is enableCRLFallback
+    expect(checker).toHaveBeenCalledOnce();
+    expect(checker.mock.calls[0][5]).toBe(false);
+  });
+
+  it("passes enableCRLFallback=true by default to ocspChecker", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      ocspChecker: checker,
+    });
+
+    expect(checker.mock.calls[0][5]).toBe(true);
+  });
+
+  // ─── fallbackOcspUrl ──────────────────────────────────────────────────────────
+
+  it("uses fallbackOcspUrl when cert has no ocspUrl", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any], // 2 certs so OCSP is attempted
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      fallbackOcspUrl: "http://custom-ocsp.example.com",
+      ocspChecker: checker,
+    });
+
+    // 3rd argument to ocspChecker is the ocspUrl
+    expect(checker.mock.calls[0][2]).toBe("http://custom-ocsp.example.com");
+  });
+
+  it("uses built-in PNPKI fallback when no fallbackOcspUrl provided and cert has no ocspUrl", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      ocspChecker: checker,
+    });
+
+    expect(checker.mock.calls[0][2]).toBe("http://ocsp.npki.gov.ph");
+  });
+
+  // ─── fallbackTsaUrl ───────────────────────────────────────────────────────────
+
+  it("uses fallbackTsaUrl when cert has no tsaUrl", async () => {
+    const tsaRequester = vi.fn().mockRejectedValue(new Error("tsa fail"));
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: false,
+      fallbackTsaUrl: "http://custom-tsa.example.com",
+      tsaRequester,
+      tsaRetryOptions: { retries: 0, initialDelayMs: 0 },
+    });
+
+    // 2nd argument to tsaRequester is the tsaUrl
+    expect(tsaRequester.mock.calls[0][1]).toBe("http://custom-tsa.example.com");
+    expect(result.timestamped).toBe(false); // failed but didn't throw
+  });
+
+  it("uses built-in PNPKI TSA fallback when no fallbackTsaUrl provided and cert has no tsaUrl", async () => {
+    const tsaRequester = vi.fn().mockRejectedValue(new Error("tsa fail"));
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: false,
+      tsaRequester,
+      tsaRetryOptions: { retries: 0, initialDelayMs: 0 },
+    });
+
+    expect(tsaRequester.mock.calls[0][1]).toBe("http://tsa.npki.gov.ph");
+  });
+
+  // ─── ocspRetryOptions ─────────────────────────────────────────────────────────
+
+  it("passes ocspRetryOptions to ocspChecker", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      ocspChecker: checker,
+      ocspRetryOptions: { retries: 3, initialDelayMs: 500, backoffFactor: 2 },
+    });
+
+    // 5th argument to ocspChecker is retryOptions
+    expect(checker.mock.calls[0][4]).toMatchObject({
+      retries: 3,
+      initialDelayMs: 500,
+      backoffFactor: 2,
+    });
+  });
+
+  // ─── logCertInfo ──────────────────────────────────────────────────────────────
+
+  it("logs cert info when logCertInfo is true", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      logCertInfo: true,
+    });
+
+    expect(spy).toHaveBeenCalledWith(
+      "[pdf-signer] Certificate Info:",
+      expect.objectContaining({ commonName: expect.any(String) })
+    );
+
+    spy.mockRestore();
+  });
+
+  it("does not log cert info when logCertInfo is false (default)", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+    });
+
+    const certInfoLog = spy.mock.calls.find((c) => String(c[0]).includes("Certificate Info"));
+    expect(certInfoLog).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  // ─── reason / location / contactInfo / stampHeader ───────────────────────────
+
+  it("signs successfully with reason and location set", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      reason: "Approved by management",
+      location: "Davao City",
+    });
+
+    expect(Buffer.isBuffer(result.signedPdf)).toBe(true);
+  });
+
+  it("signs successfully with contactInfo and stampHeader set", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      contactInfo: "signer@example.com",
+      stampHeader: "APPROVED BY ACME CORP",
+    });
+
+    expect(Buffer.isBuffer(result.signedPdf)).toBe(true);
+  });
+
+  // ─── signatureImage ───────────────────────────────────────────────────────────
+
+  it("signs successfully with a signatureImage provided", async () => {
+    // Minimal 1x1 white PNG
+    const minimalPng = Buffer.from(
+      "89504e470d0a1a0a0000000d49484452000000010000000108020000" +
+        "0090wc3d000000000c4944415408d76360f8cfc00000000200" +
+        "01e221bc330000000049454e44ae426082",
+      "hex"
+    );
+
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      signatureImage: minimalPng,
+    });
+
+    expect(Buffer.isBuffer(result.signedPdf)).toBe(true);
+  });
+
+  // ─── signaturePosition ────────────────────────────────────────────────────────
+
+  it("signs successfully with a custom signaturePosition", async () => {
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      signaturePosition: {
+        page: 1,
+        x: 50,
+        y: 50,
+        width: 200,
+        height: 60,
+      },
+    });
+
+    expect(Buffer.isBuffer(result.signedPdf)).toBe(true);
   });
 });

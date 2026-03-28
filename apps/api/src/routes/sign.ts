@@ -48,6 +48,7 @@ export const signHandler = new Hono().post("/sign", zValidator("form", SignSchem
       signaturePosition,
       skipOCSP: true,
       skipTSA: true,
+      logCertInfo: true,
     });
 
     const filename = pdf.name.replace(/\.pdf$/i, "") + "_signed.pdf";
