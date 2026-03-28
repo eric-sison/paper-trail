@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { fileURLToPath } from "url";
-import { signPDF } from "../lib/signer.js";
+import { signPDF, type CertInfo } from "../lib/signer.js";
+import { parseP12 } from "../lib/cert-utils.js";
 import { CertExpiredError, CertRevokedError, InvalidPasswordError, InvalidPdfError } from "../lib/errors.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -19,6 +20,33 @@ const mockOcspChecker = vi.fn().mockResolvedValue({
 });
 
 const mockTsaRequester = vi.fn().mockResolvedValue(Buffer.from("fake-tsa-token"));
+
+// ─── Mock P12 ──────────────────────────────────────────────────────────
+
+vi.mock("../lib/cert-utils.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/cert-utils.js")>();
+  return {
+    ...actual,
+    parseP12: vi.fn(actual.parseP12), // ← calls real impl by default
+  };
+});
+
+const mockParseP12 = vi.mocked(parseP12);
+
+const expiredCertInfo: CertInfo = {
+  commonName: "Test User",
+  organization: "Test Org",
+  email: "test@test.com",
+  serialNumber: "01",
+  validFrom: new Date("2020-01-01"),
+  validTo: new Date("2021-01-01"), // expired
+  issuerCN: "Test CA",
+  isExpired: true,
+  daysUntilExpiry: -999,
+  ocspUrl: null,
+  tsaUrl: null,
+  crlUrl: null,
+};
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -210,5 +238,42 @@ describe("signPDF", () => {
     });
 
     expect(result.dssAdded).toBe(false);
+  });
+
+  it("throws CertExpiredError when cert is expired (default behavior)", async () => {
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [],
+      certInfo: expiredCertInfo,
+    });
+
+    await expect(
+      signPDF({
+        pdfBuffer,
+        p12Buffer,
+        password: PASSWORD,
+        skipOCSP: true,
+        skipTSA: true,
+      })
+    ).rejects.toThrow(CertExpiredError);
+  });
+
+  it("continues with warning when rejectIfExpired is false", async () => {
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [],
+      certInfo: expiredCertInfo,
+    });
+
+    const result = await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipOCSP: true,
+      skipTSA: true,
+      rejectIfExpired: false,
+    });
+
+    expect(result.warnings.some((w) => w.includes("expired"))).toBe(true);
   });
 });

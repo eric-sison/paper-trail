@@ -1,7 +1,7 @@
-import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
-import { TooltipProvider } from "@workspace/ui/components/tooltip"
+import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
+import { TooltipProvider } from "@workspace/ui/components/tooltip";
 
-import appCss from "@workspace/ui/globals.css?url"
+import appCss from "@workspace/ui/globals.css?url";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -14,7 +14,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "TanStack Start Starter",
+        title: "PaperTrail",
       },
     ],
     links: [
@@ -25,7 +25,7 @@ export const Route = createRootRoute({
     ],
   }),
   shellComponent: RootDocument,
-})
+});
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
@@ -38,5 +38,5 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
-  )
+  );
 }

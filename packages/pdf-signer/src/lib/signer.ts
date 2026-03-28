@@ -362,7 +362,14 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
 
   // ── Step 2: Guard checks ────────────────────────────────────────────────
   if (certInfo.isExpired) {
-    throw new CertExpiredError(certInfo.validTo.toLocaleDateString());
+    const expiredMsg = `Certificate expired on ${certInfo.validTo.toLocaleDateString()}.`;
+
+    if (options.rejectIfExpired !== false) {
+      throw new CertExpiredError(certInfo.validTo.toLocaleDateString());
+    }
+
+    console.warn(`[pdf-signer] WARNING: ${expiredMsg} Proceeding anyway (rejectIfExpired=false).`);
+    warnings.push(expiredMsg);
   }
 
   if (certInfo.daysUntilExpiry <= 30) {

@@ -46,10 +46,8 @@ export const signHandler = new Hono().post("/sign", zValidator("form", SignSchem
       location,
       signatureImage: signatureImageBuffer,
       signaturePosition,
-      skipOCSP: process.env.BYPASS_OCSP === "true",
-      skipTSA: process.env.BYPASS_TSA === "true",
-      ocspTimeoutMs: parseInt(process.env.OCSP_TIMEOUT_MS ?? "8000"),
-      tsaTimeoutMs: parseInt(process.env.TSA_TIMEOUT_MS ?? "10000"),
+      skipOCSP: true,
+      skipTSA: true,
     });
 
     const filename = pdf.name.replace(/\.pdf$/i, "") + "_signed.pdf";

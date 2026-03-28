@@ -107,6 +107,11 @@ export interface SignOptions {
    * Pass a mock in tests to avoid hitting the real TSA server.
    */
   tsaRequester?: TSARequester;
+  /**
+   * If true (default), throw CertExpiredError when the cert is expired.
+   * If false, log a warning and continue signing.
+   */
+  rejectIfExpired?: boolean;
   /** Skip OCSP check entirely */
   skipOCSP?: boolean;
   /** Skip TSA timestamp entirely */

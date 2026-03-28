@@ -15,6 +15,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
+    "test:verbose": "vitest run --reporter=verbose",
     "test:watch": "vitest"
   },
   "dependencies": {
