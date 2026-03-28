@@ -363,6 +363,76 @@ describe("signPDF", () => {
     expect(checker.mock.calls[0][5]).toBe(true);
   });
 
+  it("passes fallbackCrlUrl to ocspChecker", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      fallbackCrlUrl: "http://custom-crl.example.com",
+      ocspChecker: checker,
+    });
+
+    // 7th argument to ocspChecker is fallbackCrlUrl
+    expect(checker.mock.calls[0][6]).toBe("http://custom-crl.example.com");
+  });
+
+  it("uses built-in PNPKI CRL fallback when no fallbackCrlUrl provided", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      ocspChecker: checker,
+    });
+
+    expect(checker.mock.calls[0][6]).toBe("http://crl.npki.gov.ph");
+  });
+
+  it("does not use fallbackCrlUrl when enableCRLFallback is false", async () => {
+    const checker = vi.fn().mockResolvedValue({ status: "good", message: "ok" });
+
+    mockParseP12.mockReturnValueOnce({
+      privateKey: {} as any,
+      certChain: [{} as any, {} as any],
+      certInfo: validCertInfoNoUrls,
+    });
+
+    await signPDF({
+      pdfBuffer,
+      p12Buffer,
+      password: PASSWORD,
+      skipTSA: true,
+      skipOCSP: false,
+      enableCRLFallback: false,
+      fallbackCrlUrl: "http://custom-crl.example.com",
+      ocspChecker: checker,
+    });
+
+    // fallbackCrlUrl is still passed as the 7th arg to ocspChecker,
+    // but ocsp.ts ignores it because enableCRLFallback=false gates the whole block
+    expect(checker.mock.calls[0][5]).toBe(false); // enableCRLFallback
+    expect(checker.mock.calls[0][6]).toBe("http://custom-crl.example.com"); // passed but unused
+  });
+
   // ─── fallbackOcspUrl ──────────────────────────────────────────────────────────
 
   it("uses fallbackOcspUrl when cert has no ocspUrl", async () => {

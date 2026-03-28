@@ -47,6 +47,7 @@ export type { SignOptions, SignResult, CertInfo, OCSPResult };
 const SIGNATURE_LENGTH = 32768; // 32KB — accommodates chain + TSA token
 const FALLBACK_OCSP_URL = "http://ocsp.npki.gov.ph";
 const FALLBACK_TSA_URL = "http://tsa.npki.gov.ph";
+const FALLBACK_CRL_URL = "http://crl.npki.gov.ph";
 const DEFAULT_MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
 const DEFAULT_MAX_P12_SIZE = 5 * 1024 * 1024; // 5MB
 
@@ -406,6 +407,7 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
   const ocspRetry = options.ocspRetryOptions ?? DEFAULT_OCSP_RETRY;
   const enableCRL = options.enableCRLFallback ?? true;
   const fallbackOcspUrl = options.fallbackOcspUrl ?? FALLBACK_OCSP_URL;
+  const fallbackCrlUrl = options.fallbackCrlUrl ?? FALLBACK_CRL_URL; // ← new
 
   let ocspResult: OCSPResult = {
     status: "unknown",
@@ -419,7 +421,8 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
       certInfo.ocspUrl ?? fallbackOcspUrl,
       ocspTimeoutMs,
       ocspRetry,
-      enableCRL
+      enableCRL,
+      fallbackCrlUrl
     );
 
     if (ocspResult.status === "revoked") throw new CertRevokedError();

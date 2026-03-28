@@ -39,7 +39,10 @@ export type OCSPChecker = (
   cert: forge.pki.Certificate,
   issuerCert: forge.pki.Certificate,
   ocspUrl: string,
-  timeoutMs?: number
+  timeoutMs?: number,
+  retryOptions?: RetryOptions,
+  enableCRLFallback?: boolean,
+  fallbackCrlUrl?: string
 ) => Promise<OCSPResult>;
 
 // ─── TSA Types ────────────────────────────────────────────────────────────────
@@ -143,6 +146,8 @@ export interface SignOptions {
   fallbackOcspUrl?: string;
   /** Fallback TSA URL if not in cert AIA */
   fallbackTsaUrl?: string;
+  /** Fallback CRL URL if not in cert CDP extension */
+  fallbackCrlUrl?: string;
   /** Header text shown on the visible stamp (default "DIGITALLY SIGNED BY PNPKI") */
   stampHeader?: string;
   /** Contact info for the PDF signature dictionary (default: cert email) */

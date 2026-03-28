@@ -36,7 +36,9 @@ export function buildOCSPRequest(cert: forge.pki.Certificate, issuerCert: forge.
   const issuerKeyHash = forge.md.sha1.create().update(keyBytes).digest().getBytes();
 
   const serialHex = cert.serialNumber;
-  const serialBytes = Buffer.from(serialHex.length % 2 === 0 ? serialHex : "0" + serialHex, "hex").toString("binary");
+  const serialBytes = Buffer.from(serialHex.length % 2 === 0 ? serialHex : "0" + serialHex, "hex").toString(
+    "binary"
+  );
 
   const sha1AlgId = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
     forge.asn1.create(
@@ -59,7 +61,9 @@ export function buildOCSPRequest(cert: forge.pki.Certificate, issuerCert: forge.
   const tbsRequest = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
     forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [request]),
   ]);
-  const ocspRequest = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [tbsRequest]);
+  const ocspRequest = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SEQUENCE, true, [
+    tbsRequest,
+  ]);
 
   return Buffer.from(forge.asn1.toDer(ocspRequest).getBytes(), "binary");
 }
@@ -121,6 +125,7 @@ function findCertStatus(nodes: forge.asn1.Asn1[]): OCSPStatus | null {
  * Flow:
  *   1. Try OCSP with retry
  *   2. If OCSP is unreachable and CRL fallback is enabled, try CRL
+ *      — uses cert's CDP extension URL first, then fallbackCrlUrl
  *   3. Return result with raw responseBytes for DSS embedding
  */
 export async function checkOCSP(
@@ -129,7 +134,8 @@ export async function checkOCSP(
   ocspUrl: string,
   timeoutMs = 8000,
   retryOptions: RetryOptions = DEFAULT_OCSP_RETRY,
-  enableCRLFallback = true
+  enableCRLFallback = true,
+  fallbackCrlUrl?: string
 ): Promise<OCSPResult> {
   let requestBuffer: Buffer;
 
@@ -161,7 +167,7 @@ export async function checkOCSP(
 
   // ── CRL fallback if OCSP unreachable ──────────────────────────────────
   if (ocspResult.status === "unreachable" && enableCRLFallback) {
-    const crlUrl = extractCRLUrl(cert);
+    const crlUrl = extractCRLUrl(cert) ?? fallbackCrlUrl ?? null; // ← fallback applied here
     if (crlUrl) {
       const crlResult = await checkCRL(cert, crlUrl, timeoutMs);
       if (crlResult.status !== "unreachable") {
@@ -176,7 +182,11 @@ export async function checkOCSP(
   return ocspResult;
 }
 
-async function sendOCSPRequest(requestBuffer: Buffer, ocspUrl: string, timeoutMs: number): Promise<OCSPResult> {
+async function sendOCSPRequest(
+  requestBuffer: Buffer,
+  ocspUrl: string,
+  timeoutMs: number
+): Promise<OCSPResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
