@@ -147,6 +147,8 @@ export interface SignOptions {
   stampHeader?: string;
   /** Contact info for the PDF signature dictionary (default: cert email) */
   contactInfo?: string;
+  /** If true, logs certificate info to console after parsing the P12 (default false) */
+  logCertInfo?: boolean;
 }
 
 // ─── Sign Result ──────────────────────────────────────────────────────────────

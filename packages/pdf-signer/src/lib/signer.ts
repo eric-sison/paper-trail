@@ -360,6 +360,24 @@ export async function signPDF(options: SignOptions): Promise<SignResult> {
   // ── Step 1: Parse .p12 (Phase 3a: password wiped in parseP12) ──────────
   const { certInfo, certChain } = parseP12(options.p12Buffer, options.password);
 
+  // ── Step 1a: Optional cert info logging ────────────────────────────────
+  if (options.logCertInfo) {
+    console.log("[pdf-signer] Certificate Info:", {
+      commonName: certInfo.commonName,
+      organization: certInfo.organization,
+      email: certInfo.email,
+      serialNumber: certInfo.serialNumber,
+      validFrom: certInfo.validFrom.toISOString(),
+      validTo: certInfo.validTo.toISOString(),
+      issuerCN: certInfo.issuerCN,
+      isExpired: certInfo.isExpired,
+      daysUntilExpiry: certInfo.daysUntilExpiry,
+      ocspUrl: certInfo.ocspUrl,
+      tsaUrl: certInfo.tsaUrl,
+      crlUrl: certInfo.crlUrl,
+    });
+  }
+
   // ── Step 2: Guard checks ────────────────────────────────────────────────
   if (certInfo.isExpired) {
     const expiredMsg = `Certificate expired on ${certInfo.validTo.toLocaleDateString()}.`;
