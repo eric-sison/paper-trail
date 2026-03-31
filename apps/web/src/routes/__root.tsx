@@ -39,7 +39,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body>
         <ThemeProvider>
           <TooltipProvider>
-            <main className="min-h-svh antialiased">{children}</main>
+            <main className="h-svh antialiased">{children}</main>
           </TooltipProvider>
         </ThemeProvider>
         <Scripts />

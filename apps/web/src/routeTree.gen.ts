@@ -12,6 +12,13 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthSignupRouteImport } from './routes/auth/signup'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AppLayoutRouteImport } from './routes/app/_layout'
+import { Route as AppLayoutIndexRouteImport } from './routes/app/_layout.index'
+import { Route as AppLayoutWorkflowRouteImport } from './routes/app/_layout.workflow'
+import { Route as AppLayoutUsersRouteImport } from './routes/app/_layout.users'
+import { Route as AppLayoutSettingsRouteImport } from './routes/app/_layout.settings'
+import { Route as AppLayoutReportsRouteImport } from './routes/app/_layout.reports'
+import { Route as AppLayoutDocumentsRouteImport } from './routes/app/_layout.documents'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -28,33 +35,119 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppLayoutRoute = AppLayoutRouteImport.update({
+  id: '/app/_layout',
+  path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppLayoutIndexRoute = AppLayoutIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
+const AppLayoutWorkflowRoute = AppLayoutWorkflowRouteImport.update({
+  id: '/workflow',
+  path: '/workflow',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
+const AppLayoutUsersRoute = AppLayoutUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
+const AppLayoutSettingsRoute = AppLayoutSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
+const AppLayoutReportsRoute = AppLayoutReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
+const AppLayoutDocumentsRoute = AppLayoutDocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/app': typeof AppLayoutRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
   '/auth/signup': typeof AuthSignupRoute
+  '/app/documents': typeof AppLayoutDocumentsRoute
+  '/app/reports': typeof AppLayoutReportsRoute
+  '/app/settings': typeof AppLayoutSettingsRoute
+  '/app/users': typeof AppLayoutUsersRoute
+  '/app/workflow': typeof AppLayoutWorkflowRoute
+  '/app/': typeof AppLayoutIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/signup': typeof AuthSignupRoute
+  '/app/documents': typeof AppLayoutDocumentsRoute
+  '/app/reports': typeof AppLayoutReportsRoute
+  '/app/settings': typeof AppLayoutSettingsRoute
+  '/app/users': typeof AppLayoutUsersRoute
+  '/app/workflow': typeof AppLayoutWorkflowRoute
+  '/app': typeof AppLayoutIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/app/_layout': typeof AppLayoutRouteWithChildren
   '/auth/login': typeof AuthLoginRoute
   '/auth/signup': typeof AuthSignupRoute
+  '/app/_layout/documents': typeof AppLayoutDocumentsRoute
+  '/app/_layout/reports': typeof AppLayoutReportsRoute
+  '/app/_layout/settings': typeof AppLayoutSettingsRoute
+  '/app/_layout/users': typeof AppLayoutUsersRoute
+  '/app/_layout/workflow': typeof AppLayoutWorkflowRoute
+  '/app/_layout/': typeof AppLayoutIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth/login' | '/auth/signup'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/auth/login'
+    | '/auth/signup'
+    | '/app/documents'
+    | '/app/reports'
+    | '/app/settings'
+    | '/app/users'
+    | '/app/workflow'
+    | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth/login' | '/auth/signup'
-  id: '__root__' | '/' | '/auth/login' | '/auth/signup'
+  to:
+    | '/'
+    | '/auth/login'
+    | '/auth/signup'
+    | '/app/documents'
+    | '/app/reports'
+    | '/app/settings'
+    | '/app/users'
+    | '/app/workflow'
+    | '/app'
+  id:
+    | '__root__'
+    | '/'
+    | '/app/_layout'
+    | '/auth/login'
+    | '/auth/signup'
+    | '/app/_layout/documents'
+    | '/app/_layout/reports'
+    | '/app/_layout/settings'
+    | '/app/_layout/users'
+    | '/app/_layout/workflow'
+    | '/app/_layout/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppLayoutRoute: typeof AppLayoutRouteWithChildren
   AuthLoginRoute: typeof AuthLoginRoute
   AuthSignupRoute: typeof AuthSignupRoute
 }
@@ -82,11 +175,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/_layout': {
+      id: '/app/_layout'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AppLayoutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/_layout/': {
+      id: '/app/_layout/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppLayoutIndexRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/workflow': {
+      id: '/app/_layout/workflow'
+      path: '/workflow'
+      fullPath: '/app/workflow'
+      preLoaderRoute: typeof AppLayoutWorkflowRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/users': {
+      id: '/app/_layout/users'
+      path: '/users'
+      fullPath: '/app/users'
+      preLoaderRoute: typeof AppLayoutUsersRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/settings': {
+      id: '/app/_layout/settings'
+      path: '/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppLayoutSettingsRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/reports': {
+      id: '/app/_layout/reports'
+      path: '/reports'
+      fullPath: '/app/reports'
+      preLoaderRoute: typeof AppLayoutReportsRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/documents': {
+      id: '/app/_layout/documents'
+      path: '/documents'
+      fullPath: '/app/documents'
+      preLoaderRoute: typeof AppLayoutDocumentsRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
   }
 }
 
+interface AppLayoutRouteChildren {
+  AppLayoutDocumentsRoute: typeof AppLayoutDocumentsRoute
+  AppLayoutReportsRoute: typeof AppLayoutReportsRoute
+  AppLayoutSettingsRoute: typeof AppLayoutSettingsRoute
+  AppLayoutUsersRoute: typeof AppLayoutUsersRoute
+  AppLayoutWorkflowRoute: typeof AppLayoutWorkflowRoute
+  AppLayoutIndexRoute: typeof AppLayoutIndexRoute
+}
+
+const AppLayoutRouteChildren: AppLayoutRouteChildren = {
+  AppLayoutDocumentsRoute: AppLayoutDocumentsRoute,
+  AppLayoutReportsRoute: AppLayoutReportsRoute,
+  AppLayoutSettingsRoute: AppLayoutSettingsRoute,
+  AppLayoutUsersRoute: AppLayoutUsersRoute,
+  AppLayoutWorkflowRoute: AppLayoutWorkflowRoute,
+  AppLayoutIndexRoute: AppLayoutIndexRoute,
+}
+
+const AppLayoutRouteWithChildren = AppLayoutRoute._addFileChildren(
+  AppLayoutRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppLayoutRoute: AppLayoutRouteWithChildren,
   AuthLoginRoute: AuthLoginRoute,
   AuthSignupRoute: AuthSignupRoute,
 }

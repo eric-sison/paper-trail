@@ -6,7 +6,7 @@ export const Route = createFileRoute("/")({ component: App });
 
 function App() {
   return (
-    <div className="flex min-h-svh items-center justify-center">
+    <div className="flex h-full items-center justify-center">
       {/* <PdfSigner /> */}
       <ThemeToggle />
     </div>
