@@ -1,3 +1,5 @@
+import { ThemeProvider } from "@/contexts/ThemeProvider";
+import { themeScript } from "@/utils/theme-script";
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import { TooltipProvider } from "@workspace/ui/components/tooltip";
 
@@ -29,12 +31,17 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <TooltipProvider>{children}</TooltipProvider>
+        <ThemeProvider>
+          <TooltipProvider>
+            <main className="min-h-svh antialiased">{children}</main>
+          </TooltipProvider>
+        </ThemeProvider>
         <Scripts />
       </body>
     </html>
