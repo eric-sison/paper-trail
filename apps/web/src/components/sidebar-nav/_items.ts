@@ -2,13 +2,29 @@ import {
   AppWindowMacIcon,
   AudioWaveform,
   Command,
+  Database,
+  FileArchive,
   FileChartLineIcon,
+  FileSearchCorner,
+  FileStack,
+  FileSymlink,
+  FileXCorner,
   FolderArchiveIcon,
+  Forward,
   GalleryVerticalEnd,
+  GitCompareArrows,
+  History,
+  ListTodo,
   NetworkIcon,
+  PanelsTopLeft,
+  PencilLine,
   SettingsIcon,
+  UserCog,
+  UserPen,
   Users,
+  ShieldCogCorner,
   type LucideIcon,
+  FileCog,
 } from "lucide-react";
 
 export type NavItem = {
@@ -18,7 +34,7 @@ export type NavItem = {
   subItems?: NavSubItem[];
 };
 
-export type NavSubItem = Pick<NavItem, "title" | "url">;
+export type NavSubItem = Pick<NavItem, "title" | "url" | "icon">;
 
 export const NAVIGATION_ITEMS = {
   user: {
@@ -54,10 +70,12 @@ export const NAVIGATION_ITEMS = {
         {
           title: "Overview",
           url: "/app/overview",
+          icon: PanelsTopLeft,
         },
         {
           title: "Recent Activities",
           url: "/app/recent-activities",
+          icon: History,
         },
       ],
     },
@@ -69,22 +87,27 @@ export const NAVIGATION_ITEMS = {
         {
           title: "All Documents",
           url: "/app/documents/all",
+          icon: FileStack,
         },
         {
           title: "Drafts",
           url: "/app/documents/drafts",
+          icon: FileSymlink,
         },
         {
           title: "In Review",
           url: "/app/documents/in-review",
+          icon: FileSearchCorner,
         },
         {
           title: "Rejected",
           url: "/app/documents/rejected",
+          icon: FileXCorner,
         },
         {
           title: "Archived",
           url: "/app/documents/archived",
+          icon: FileArchive,
         },
       ],
     },
@@ -96,18 +119,22 @@ export const NAVIGATION_ITEMS = {
         {
           title: "Submissions",
           url: "/app/workflow/submission",
+          icon: Forward,
         },
         {
           title: "Approvals Queue",
           url: "/app/workflow/approvals-queue",
+          icon: ListTodo,
         },
         {
           title: "Review Assignments",
           url: "/app/workflow/review-assignments",
+          icon: UserPen,
         },
         {
           title: "Audit Trail",
           url: "audit-trail",
+          icon: PencilLine,
         },
       ],
     },
@@ -129,22 +156,27 @@ export const NAVIGATION_ITEMS = {
         {
           title: "General Settings",
           url: "/app/settings/general",
+          icon: UserCog,
         },
         {
           title: "Workflow configuration",
           url: "/app/settings/workflow-configuration",
+          icon: GitCompareArrows,
         },
         {
           title: "Storage Settings",
           url: "/app/settings/storage",
+          icon: Database,
         },
         {
           title: "Security",
           url: "/app/settings/security",
+          icon: ShieldCogCorner,
         },
         {
           title: "Audit Settings",
           url: "/app/settings/audit",
+          icon: FileCog,
         },
       ],
     },

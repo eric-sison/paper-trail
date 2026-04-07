@@ -41,7 +41,7 @@ export const NavMain: FunctionComponent<NavMainProps> = ({ items }) => {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Platform</SidebarGroupLabel>
+      <SidebarGroupLabel className="text-xs font-bold tracking-widest uppercase">General</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => {
           // Check if this item contains sub-items
@@ -91,7 +91,8 @@ export const NavMain: FunctionComponent<NavMainProps> = ({ items }) => {
                                 navigate({ to: subItem.url });
                               }}
                             >
-                              {subItem.title}
+                              {subItem.icon && <subItem.icon />}
+                              <span>{subItem.title}</span>
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
                         ))}
@@ -116,19 +117,20 @@ export const NavMain: FunctionComponent<NavMainProps> = ({ items }) => {
                       </SidebarMenuButton>
                     }
                   />
-                  <DropdownMenuContent align="start" side="right" className="min-w-48">
-                    {item.subItems.map((subItems, index) => {
+                  <DropdownMenuContent align="start" side="right" className="min-w-52">
+                    {item.subItems.map((subItem, index) => {
                       const isLast = index === item.subItems!.length - 1;
                       return (
                         <Fragment key={index}>
                           <DropdownMenuItem
                             key={index}
-                            className={cn(setActiveItem(subItems.url) && "bg-secondary")}
+                            className={cn(setActiveItem(subItem.url) && "bg-secondary")}
                             onClick={() => {
-                              navigate({ to: subItems.url });
+                              navigate({ to: subItem.url });
                             }}
                           >
-                            <span>{subItems.title}</span>
+                            {subItem.icon && <subItem.icon />}
+                            <span>{subItem.title}</span>
                           </DropdownMenuItem>
 
                           {!isLast && <DropdownMenuSeparator />}
